@@ -1,6 +1,6 @@
 import gradio as gr
 import os
-from PIL import Image
+from PIL import Image, ImageOps, UnidentifiedImageError
 import tempfile
 import shutil
 from pathlib import Path
@@ -45,6 +45,14 @@ class ImagePrepApp:
         self.current_zoom = 1.0
         self.current_crop_width = 512
         self.current_crop_height = 512
+        
+        # Utilities processing directory
+        self.utilities_dir = os.path.join(self.temp_dir, "utilities")
+        self.processed_dir = os.path.join(self.utilities_dir, "processed")
+        self.corrupted_dir = os.path.join(self.utilities_dir, "corrupted")
+        os.makedirs(self.utilities_dir, exist_ok=True)
+        os.makedirs(self.processed_dir, exist_ok=True)
+        os.makedirs(self.corrupted_dir, exist_ok=True)
         
     def calculate_gallery_height(self, num_images, columns=8):
         """Calculate optimal gallery height based on number of images"""
@@ -461,6 +469,208 @@ class ImagePrepApp:
         """Refresh output gallery with dynamic height"""
         gallery_data = self.get_output_gallery_with_selection_visual()
         return gallery_data
+    
+    # Utility Functions
+    def convert_images_to_rgb(self, folder_path):
+        """Convert grayscale and RGBA images to RGB."""
+        converted_count = 0
+        error_count = 0
+        conversion_log = []
+        
+        for filename in os.listdir(folder_path):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                file_path = os.path.join(folder_path, filename)
+                try:
+                    with Image.open(file_path) as img:
+                        original_mode = img.mode
+                        # Check if the image needs conversion
+                        if img.mode in ['L', 'LA', 'P']:  # Grayscale or palette
+                            rgb_img = img.convert('RGB')
+                            rgb_img.save(file_path, 'JPEG', quality=95)
+                            converted_count += 1
+                            conversion_log.append(f"✅ {filename}: {original_mode} → RGB")
+                        elif img.mode == 'RGBA':
+                            # Create white background for RGBA conversion
+                            rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                            rgb_img.paste(img, mask=img.split()[-1] if len(img.split()) == 4 else None)
+                            rgb_img.save(file_path, 'JPEG', quality=95)
+                            converted_count += 1
+                            conversion_log.append(f"✅ {filename}: RGBA → RGB (white background)")
+                        else:
+                            conversion_log.append(f"ℹ️ {filename}: Already RGB, skipped")
+                except Exception as e:
+                    error_count += 1
+                    conversion_log.append(f"❌ {filename}: Error - {str(e)}")
+        
+        return converted_count, error_count, conversion_log
+    
+    def check_and_remove_corrupted_images(self, folder_path):
+        """Check for corrupted/truncated images and move them to corrupted folder."""
+        corrupted_count = 0
+        checked_count = 0
+        corruption_log = []
+        
+        for filename in os.listdir(folder_path):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                file_path = os.path.join(folder_path, filename)
+                checked_count += 1
+                try:
+                    with Image.open(file_path) as img:
+                        img.verify()  # Verify if the image is corrupted
+                        img = Image.open(file_path)  # Reopen for further checks
+                        ImageOps.exif_transpose(img)  # Simple operation to check loadability
+                        corruption_log.append(f"✅ {filename}: OK")
+                except (IOError, UnidentifiedImageError, Exception) as e:
+                    corrupted_count += 1
+                    # Move corrupted file to corrupted directory
+                    corrupted_path = os.path.join(self.corrupted_dir, filename)
+                    shutil.move(file_path, corrupted_path)
+                    corruption_log.append(f"🗑️ {filename}: Corrupted/truncated - moved to quarantine")
+        
+        return checked_count, corrupted_count, corruption_log
+    
+    def process_uploaded_dataset(self, zip_file, convert_rgb, check_corruption):
+        """Process uploaded dataset ZIP file with selected utilities."""
+        if not zip_file:
+            return None, "No file uploaded", [], "No processing log available"
+        
+        try:
+            # Clear previous utilities processing
+            if os.path.exists(self.processed_dir):
+                shutil.rmtree(self.processed_dir)
+            os.makedirs(self.processed_dir, exist_ok=True)
+            
+            # Extract ZIP file
+            with zipfile.ZipFile(zip_file.name, 'r') as zip_ref:
+                zip_ref.extractall(self.processed_dir)
+            
+            processing_log = [f"📦 Extracted ZIP file: {os.path.basename(zip_file.name)}"]
+            
+            # Find image files in extracted folders
+            image_files = []
+            for root, dirs, files in os.walk(self.processed_dir):
+                for file in files:
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                        image_files.append(os.path.join(root, file))
+            
+            processing_log.append(f"🔍 Found {len(image_files)} image files")
+            
+            if not image_files:
+                return None, "No image files found in ZIP", [], "\n".join(processing_log)
+            
+            # Apply corruption check first (if enabled)
+            if check_corruption:
+                processing_log.append("\n🔍 CHECKING FOR CORRUPTED IMAGES:")
+                checked, corrupted, corruption_log = self.check_and_remove_corrupted_images(self.processed_dir)
+                processing_log.extend(corruption_log)
+                processing_log.append(f"📊 Corruption Check Summary: {checked} checked, {corrupted} corrupted files removed")
+            
+            # Apply RGB conversion (if enabled)
+            if convert_rgb:
+                processing_log.append("\n🎨 CONVERTING TO RGB:")
+                converted, errors, conversion_log = self.convert_images_to_rgb(self.processed_dir)
+                processing_log.extend(conversion_log)
+                processing_log.append(f"📊 Conversion Summary: {converted} converted, {errors} errors")
+            
+            # Create new ZIP with processed images
+            output_zip_path = os.path.join(self.utilities_dir, "processed_dataset.zip")
+            with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(self.processed_dir):
+                    for file in files:
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                            file_path = os.path.join(root, file)
+                            # Get relative path for ZIP
+                            arcname = os.path.relpath(file_path, self.processed_dir)
+                            zipf.write(file_path, arcname)
+            
+            # Get final file count
+            final_count = len([f for f in os.listdir(self.processed_dir) 
+                             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff'))])
+            
+            processing_log.append(f"\n✅ Processing complete! Final dataset contains {final_count} images")
+            
+            # Create gallery of processed images (first 20 for preview)
+            preview_images = []
+            count = 0
+            for root, dirs, files in os.walk(self.processed_dir):
+                for file in sorted(files):
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')) and count < 20:
+                        file_path = os.path.join(root, file)
+                        preview_images.append(file_path)
+                        count += 1
+                    if count >= 20:
+                        break
+                if count >= 20:
+                    break
+            
+            return output_zip_path, f"✅ Processing complete! {final_count} images ready for download", preview_images, "\n".join(processing_log)
+            
+        except Exception as e:
+            return None, f"❌ Error processing dataset: {str(e)}", [], f"Error: {str(e)}"
+    
+    def download_all_crops_with_utilities(self, convert_rgb, check_corruption):
+        """Create a zip file with all cropped images, optionally processed through utilities"""
+        if not os.path.exists(self.output_dir) or not os.listdir(self.output_dir):
+            return None, "No crops to download"
+        
+        try:
+            processing_log = []
+            
+            # If utilities are requested, process the crops first
+            if convert_rgb or check_corruption:
+                # Copy crops to utilities processing folder
+                temp_process_dir = os.path.join(self.utilities_dir, "temp_crops")
+                if os.path.exists(temp_process_dir):
+                    shutil.rmtree(temp_process_dir)
+                os.makedirs(temp_process_dir, exist_ok=True)
+                
+                # Copy all crops to temp processing directory
+                for filename in os.listdir(self.output_dir):
+                    if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        src_path = os.path.join(self.output_dir, filename)
+                        dst_path = os.path.join(temp_process_dir, filename)
+                        shutil.copy2(src_path, dst_path)
+                
+                processing_log.append(f"📦 Copied {len(os.listdir(temp_process_dir))} crops for processing")
+                
+                # Apply corruption check first (if enabled)
+                if check_corruption:
+                    processing_log.append("🔍 Checking for corrupted crops...")
+                    checked, corrupted, corruption_log = self.check_and_remove_corrupted_images(temp_process_dir)
+                    processing_log.append(f"Corruption check: {checked} checked, {corrupted} corrupted")
+                
+                # Apply RGB conversion (if enabled)
+                if convert_rgb:
+                    processing_log.append("🎨 Converting crops to RGB...")
+                    converted, errors, conversion_log = self.convert_images_to_rgb(temp_process_dir)
+                    processing_log.append(f"RGB conversion: {converted} converted, {errors} errors")
+                
+                # Create ZIP from processed crops
+                zip_path = os.path.join(self.temp_dir, "processed_cropped_images.zip")
+                source_dir = temp_process_dir
+                processing_status = " (Processed)"
+            else:
+                # Create ZIP from original crops
+                zip_path = os.path.join(self.temp_dir, "cropped_images.zip")
+                source_dir = self.output_dir
+                processing_status = ""
+            
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                for filename in os.listdir(source_dir):
+                    if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        file_path = os.path.join(source_dir, filename)
+                        zipf.write(file_path, filename)
+            
+            final_count = len([f for f in os.listdir(source_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+            status_message = f"📦 Created zip with {final_count} images{processing_status}"
+            
+            if processing_log:
+                status_message += f"\n\nProcessing Log:\n" + "\n".join(processing_log)
+            
+            return zip_path, status_message
+            
+        except Exception as e:
+            return None, f"❌ Error creating zip: {str(e)}"
 
 # Initialize the app
 app = ImagePrepApp()
@@ -754,6 +964,17 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
             download_status = gr.Textbox(label="Download Status", interactive=False)
             download_file = gr.File(label="Download ZIP", visible=False)
             
+            # Processing options for download (initially hidden)
+            with gr.Group(visible=False) as processing_options:
+                gr.Markdown("### 🔧 Apply Utilities Before Download?")
+                with gr.Row():
+                    download_convert_rgb = gr.Checkbox(label="🎨 Convert to RGB", value=False)
+                    download_corruption_check = gr.Checkbox(label="🔍 Check for Corruption", value=False)
+                
+                with gr.Row():
+                    download_confirm_btn = gr.Button("📦 Create ZIP", variant="primary")
+                    download_skip_btn = gr.Button("⏭️ Skip Utilities", variant="secondary")
+            
             gr.Markdown("### 🖼️ Saved Crops")
             gr.Markdown("**Left-click on images to select/deselect for deletion**")
             
@@ -783,6 +1004,88 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
                 placeholder="No files selected - click on images above to select them"
             )
             delete_status = gr.Textbox(label="Delete Status", interactive=False)
+        
+        # TAB 4: UTILITIES
+        with gr.Tab("🔧 Utilities", id="utilities_tab"):
+            gr.Markdown("## Dataset Processing Utilities")
+            gr.Markdown("Upload a ZIP file containing images to process with various utilities")
+            
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("### 📤 Upload Dataset")
+                    dataset_zip = gr.File(
+                        label="Upload ZIP Dataset",
+                        file_types=[".zip"],
+                        height=150
+                    )
+                    
+                    gr.Markdown("### ⚙️ Processing Options")
+                    with gr.Group():
+                        convert_rgb_check = gr.Checkbox(
+                            label="🎨 Convert to RGB",
+                            value=False,
+                            info="Convert grayscale, RGBA, and palette images to RGB format"
+                        )
+                        corruption_check = gr.Checkbox(
+                            label="🔍 Remove Corrupted Images", 
+                            value=True,
+                            info="Scan for and remove corrupted/truncated image files"
+                        )
+                    
+                    process_btn = gr.Button("🚀 Process Dataset", variant="primary", size="lg")
+                    
+                    with gr.Row():
+                        utilities_status = gr.Textbox(
+                            label="Processing Status", 
+                            interactive=False,
+                            placeholder="Upload a ZIP file and click Process Dataset..."
+                        )
+                    
+                    utilities_download = gr.File(
+                        label="Download Processed Dataset", 
+                        visible=False
+                    )
+                
+                with gr.Column(scale=1):
+                    gr.Markdown("### 📋 Processing Log")
+                    processing_log = gr.Textbox(
+                        label="Detailed Log",
+                        lines=15,
+                        max_lines=20,
+                        interactive=False,
+                        placeholder="Processing log will appear here..."
+                    )
+            
+            gr.Markdown("### 🖼️ Preview of Processed Images")
+            utilities_gallery = gr.Gallery(
+                label="Processed Images Preview (First 20)",
+                show_label=True,
+                columns=6,
+                object_fit="contain",
+                allow_preview=True,
+                height=300
+            )
+            
+            gr.Markdown("---")
+            gr.Markdown("### ℹ️ Utility Information - Dataset processing scripts by Jomcey!")
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("""
+                    **🎨 Convert to RGB:**
+                    - Converts grayscale images to RGB format
+                    - Converts RGBA images to RGB with white background
+                    - Converts palette images to RGB
+                    - Saves as JPEG with 95% quality
+                    """)
+                
+                with gr.Column():
+                    gr.Markdown("""
+                    **🔍 Remove Corrupted Images:**
+                    - Scans for truncated or corrupted image files
+                    - Removes files that can't be properly loaded
+                    - Quarantines problematic files separately
+                    - Ensures dataset integrity
+                    """)
     
     # Event handlers
     
@@ -910,13 +1213,40 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
         outputs=[output_gallery, delete_status, selected_files_display]
     )
     
-    # Download all crops
+    # Download all crops - show processing options
     download_all_btn.click(
-        app.download_all_crops,
+        lambda: gr.update(visible=True),
+        outputs=[processing_options]
+    )
+    
+    # Confirm download with utilities
+    download_confirm_btn.click(
+        lambda rgb, corruption: app.download_all_crops_with_utilities(rgb, corruption),
+        inputs=[download_convert_rgb, download_corruption_check],
         outputs=[download_file, download_status]
     ).then(
-        lambda: gr.update(visible=True),
-        outputs=[download_file]
+        lambda: (gr.update(visible=True), gr.update(visible=False)),
+        outputs=[download_file, processing_options]
+    )
+    
+    # Skip utilities and download directly
+    download_skip_btn.click(
+        lambda: app.download_all_crops_with_utilities(False, False),
+        outputs=[download_file, download_status]
+    ).then(
+        lambda: (gr.update(visible=True), gr.update(visible=False)),
+        outputs=[download_file, processing_options]
+    )
+    
+    # Utilities tab functions
+    process_btn.click(
+        app.process_uploaded_dataset,
+        inputs=[dataset_zip, convert_rgb_check, corruption_check],
+        outputs=[utilities_download, utilities_status, utilities_gallery, processing_log]
+    ).then(
+        lambda x: gr.update(visible=True) if x else gr.update(visible=False),
+        inputs=[utilities_download],
+        outputs=[utilities_download]
     )
 
 if __name__ == "__main__":
