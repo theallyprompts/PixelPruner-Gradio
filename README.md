@@ -3,6 +3,8 @@ PixelPruner Gradio is a web-based image cropping application designed for AI dat
 
 This is the Gradio implementation of the Python app/windows desktop app [https://github.com/theallyprompts/PixelPruner](https://github.com/theallyprompts/PixelPruner)
 
+![image](https://github.com/user-attachments/assets/dffadcba-d8b8-4a43-be3e-133dc478ff1e)
+
 #### Also available as a [HuggingFace Space](https://huggingface.co/spaces/TheAllyPrompts/PixelPruner)!
 
 ## Features
@@ -16,8 +18,6 @@ This is the Gradio implementation of the Python app/windows desktop app [https:/
 - **Output Format**: High-quality PNG crops for maximum compatibility
 - **Batch Processing**: Upload and process multiple images simultaneously
 
----
-
 ## Quick Start Guide
 
 ### 1. **Installation**
@@ -28,7 +28,7 @@ git clone https://github.com/theallyprompts/PixelPruner-Gradio
 cd PixelPruner
 
 # Install dependencies
-pip install gradio pillow
+pip install requirements.txt
 
 # Run the application
 python app.py
@@ -45,6 +45,14 @@ pip install pillow[webp]
 - **RAM**: 4GB minimum, 8GB+ recommended for large images
 - **Storage**: Temporary space equal to ~3x total input image size
 - **Browser**: Any modern web browser (Chrome, Firefox, Safari, Edge)
+
+# Roadmap
+
+## Planned Improvements
+- **QoL Additions** - Rotation, basic image editing (brightness, contrast, etc.)
+- **Dataset Utility Scripts** - Tools for dataset enhancement
+- **Captioning Tools** - WD Tagger, JoyCaption, etc.
+- **Upload** - Direct upload to popular LoRA training services
 
 ## Created By...
 [TheAlly](https://www.linkedin.com/in/allynicoll/) - Bringing efficient image processing to the web! If PixelPruner Gradio has improved your workflow, consider [supporting development](https://ko-fi.com/theallyprompts)!
