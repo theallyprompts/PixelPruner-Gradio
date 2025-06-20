@@ -120,7 +120,7 @@ class ImagePrepApp:
             return "No files uploaded", [], gr.update()
         
         self.images = []
-        supported_formats = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')
+        supported_formats = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')
         
         for file in files:
             if file.name.lower().endswith(supported_formats):
@@ -617,7 +617,7 @@ class ImagePrepApp:
             for root, dirs, files in os.walk(self.processed_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')):
                         image_files.append(file_path)
                     elif file.lower().endswith('.txt') and preserve_captions:
                         caption_files.append(file_path)
@@ -654,7 +654,7 @@ class ImagePrepApp:
                         arcname = os.path.relpath(file_path, self.processed_dir)
                         
                         # Add image files
-                        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')):
                             zipf.write(file_path, arcname)
                         # Add caption files if preservation is enabled
                         elif file.lower().endswith('.txt') and preserve_captions:
@@ -665,7 +665,7 @@ class ImagePrepApp:
             final_caption_count = 0
             for root, dirs, files in os.walk(self.processed_dir):
                 for file in files:
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')):
                         final_image_count += 1
                     elif file.lower().endswith('.txt') and preserve_captions:
                         final_caption_count += 1
