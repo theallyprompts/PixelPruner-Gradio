@@ -471,11 +471,33 @@ class ImagePrepApp:
         return gallery_data
     
     # Utility Functions
-    def convert_images_to_rgb(self, folder_path):
+    def get_image_base_name(self, filename):
+        """Get base name of image file without extension"""
+        return os.path.splitext(filename)[0]
+    
+    def find_caption_file(self, image_path, folder_path):
+        """Find corresponding caption (.txt) file for an image"""
+        base_name = self.get_image_base_name(os.path.basename(image_path))
+        caption_filename = base_name + ".txt"
+        caption_path = os.path.join(folder_path, caption_filename)
+        
+        # Check if caption file exists
+        if os.path.exists(caption_path):
+            return caption_path
+        
+        # Also check in subdirectories (in case of nested structure)
+        for root, dirs, files in os.walk(folder_path):
+            if caption_filename in files:
+                return os.path.join(root, caption_filename)
+        
+        return None
+    
+    def convert_images_to_rgb(self, folder_path, preserve_captions=True):
         """Convert grayscale and RGBA images to RGB."""
         converted_count = 0
         error_count = 0
         conversion_log = []
+        caption_files_preserved = 0
         
         for filename in os.listdir(folder_path):
             if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
@@ -489,6 +511,13 @@ class ImagePrepApp:
                             rgb_img.save(file_path, 'JPEG', quality=95)
                             converted_count += 1
                             conversion_log.append(f"✅ {filename}: {original_mode} → RGB")
+                            
+                            # Check if caption file exists
+                            if preserve_captions:
+                                caption_path = self.find_caption_file(file_path, folder_path)
+                                if caption_path:
+                                    caption_files_preserved += 1
+                                    
                         elif img.mode == 'RGBA':
                             # Create white background for RGBA conversion
                             rgb_img = Image.new('RGB', img.size, (255, 255, 255))
@@ -496,19 +525,37 @@ class ImagePrepApp:
                             rgb_img.save(file_path, 'JPEG', quality=95)
                             converted_count += 1
                             conversion_log.append(f"✅ {filename}: RGBA → RGB (white background)")
+                            
+                            # Check if caption file exists
+                            if preserve_captions:
+                                caption_path = self.find_caption_file(file_path, folder_path)
+                                if caption_path:
+                                    caption_files_preserved += 1
+                                    
                         else:
                             conversion_log.append(f"ℹ️ {filename}: Already RGB, skipped")
+                            
+                            # Still check for caption files
+                            if preserve_captions:
+                                caption_path = self.find_caption_file(file_path, folder_path)
+                                if caption_path:
+                                    caption_files_preserved += 1
+                                    
                 except Exception as e:
                     error_count += 1
                     conversion_log.append(f"❌ {filename}: Error - {str(e)}")
         
+        if preserve_captions and caption_files_preserved > 0:
+            conversion_log.append(f"📝 Caption files preserved: {caption_files_preserved}")
+        
         return converted_count, error_count, conversion_log
     
-    def check_and_remove_corrupted_images(self, folder_path):
+    def check_and_remove_corrupted_images(self, folder_path, preserve_captions=True):
         """Check for corrupted/truncated images and move them to corrupted folder."""
         corrupted_count = 0
         checked_count = 0
         corruption_log = []
+        caption_files_removed = 0
         
         for filename in os.listdir(folder_path):
             if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
@@ -522,14 +569,32 @@ class ImagePrepApp:
                         corruption_log.append(f"✅ {filename}: OK")
                 except (IOError, UnidentifiedImageError, Exception) as e:
                     corrupted_count += 1
+                    
+                    # Find and handle corresponding caption file
+                    caption_path = None
+                    if preserve_captions:
+                        caption_path = self.find_caption_file(file_path, folder_path)
+                    
                     # Move corrupted file to corrupted directory
                     corrupted_path = os.path.join(self.corrupted_dir, filename)
                     shutil.move(file_path, corrupted_path)
-                    corruption_log.append(f"🗑️ {filename}: Corrupted/truncated - moved to quarantine")
+                    
+                    # Move corresponding caption file if it exists
+                    if caption_path and os.path.exists(caption_path):
+                        caption_filename = os.path.basename(caption_path)
+                        corrupted_caption_path = os.path.join(self.corrupted_dir, caption_filename)
+                        shutil.move(caption_path, corrupted_caption_path)
+                        caption_files_removed += 1
+                        corruption_log.append(f"🗑️ {filename}: Corrupted/truncated - moved to quarantine (+ caption file)")
+                    else:
+                        corruption_log.append(f"🗑️ {filename}: Corrupted/truncated - moved to quarantine")
+        
+        if preserve_captions and caption_files_removed > 0:
+            corruption_log.append(f"📝 Caption files also quarantined: {caption_files_removed}")
         
         return checked_count, corrupted_count, corruption_log
     
-    def process_uploaded_dataset(self, zip_file, convert_rgb, check_corruption):
+    def process_uploaded_dataset(self, zip_file, convert_rgb, check_corruption, preserve_captions):
         """Process uploaded dataset ZIP file with selected utilities."""
         if not zip_file:
             return None, "No file uploaded", [], "No processing log available"
@@ -546,14 +611,20 @@ class ImagePrepApp:
             
             processing_log = [f"📦 Extracted ZIP file: {os.path.basename(zip_file.name)}"]
             
-            # Find image files in extracted folders
+            # Find image files and caption files in extracted folders
             image_files = []
+            caption_files = []
             for root, dirs, files in os.walk(self.processed_dir):
                 for file in files:
+                    file_path = os.path.join(root, file)
                     if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
-                        image_files.append(os.path.join(root, file))
+                        image_files.append(file_path)
+                    elif file.lower().endswith('.txt') and preserve_captions:
+                        caption_files.append(file_path)
             
             processing_log.append(f"🔍 Found {len(image_files)} image files")
+            if preserve_captions:
+                processing_log.append(f"📝 Found {len(caption_files)} caption files")
             
             if not image_files:
                 return None, "No image files found in ZIP", [], "\n".join(processing_log)
@@ -561,33 +632,48 @@ class ImagePrepApp:
             # Apply corruption check first (if enabled)
             if check_corruption:
                 processing_log.append("\n🔍 CHECKING FOR CORRUPTED IMAGES:")
-                checked, corrupted, corruption_log = self.check_and_remove_corrupted_images(self.processed_dir)
+                checked, corrupted, corruption_log = self.check_and_remove_corrupted_images(self.processed_dir, preserve_captions)
                 processing_log.extend(corruption_log)
                 processing_log.append(f"📊 Corruption Check Summary: {checked} checked, {corrupted} corrupted files removed")
             
             # Apply RGB conversion (if enabled)
             if convert_rgb:
                 processing_log.append("\n🎨 CONVERTING TO RGB:")
-                converted, errors, conversion_log = self.convert_images_to_rgb(self.processed_dir)
+                converted, errors, conversion_log = self.convert_images_to_rgb(self.processed_dir, preserve_captions)
                 processing_log.extend(conversion_log)
                 processing_log.append(f"📊 Conversion Summary: {converted} converted, {errors} errors")
             
-            # Create new ZIP with processed images
+            # Create new ZIP with processed images and caption files
             output_zip_path = os.path.join(self.utilities_dir, "processed_dataset.zip")
             with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Add all remaining image files
                 for root, dirs, files in os.walk(self.processed_dir):
                     for file in files:
+                        file_path = os.path.join(root, file)
+                        # Get relative path for ZIP
+                        arcname = os.path.relpath(file_path, self.processed_dir)
+                        
+                        # Add image files
                         if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
-                            file_path = os.path.join(root, file)
-                            # Get relative path for ZIP
-                            arcname = os.path.relpath(file_path, self.processed_dir)
+                            zipf.write(file_path, arcname)
+                        # Add caption files if preservation is enabled
+                        elif file.lower().endswith('.txt') and preserve_captions:
                             zipf.write(file_path, arcname)
             
-            # Get final file count
-            final_count = len([f for f in os.listdir(self.processed_dir) 
-                             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff'))])
+            # Get final file counts
+            final_image_count = 0
+            final_caption_count = 0
+            for root, dirs, files in os.walk(self.processed_dir):
+                for file in files:
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                        final_image_count += 1
+                    elif file.lower().endswith('.txt') and preserve_captions:
+                        final_caption_count += 1
             
-            processing_log.append(f"\n✅ Processing complete! Final dataset contains {final_count} images")
+            if preserve_captions and final_caption_count > 0:
+                processing_log.append(f"\n✅ Processing complete! Final dataset contains {final_image_count} images and {final_caption_count} caption files")
+            else:
+                processing_log.append(f"\n✅ Processing complete! Final dataset contains {final_image_count} images")
             
             # Create gallery of processed images (first 20 for preview)
             preview_images = []
@@ -603,7 +689,12 @@ class ImagePrepApp:
                 if count >= 20:
                     break
             
-            return output_zip_path, f"✅ Processing complete! {final_count} images ready for download", preview_images, "\n".join(processing_log)
+            status_message = f"✅ Processing complete! {final_image_count} images"
+            if preserve_captions and final_caption_count > 0:
+                status_message += f" and {final_caption_count} caption files"
+            status_message += " ready for download"
+            
+            return output_zip_path, status_message, preview_images, "\n".join(processing_log)
             
         except Exception as e:
             return None, f"❌ Error processing dataset: {str(e)}", [], f"Error: {str(e)}"
@@ -633,16 +724,16 @@ class ImagePrepApp:
                 
                 processing_log.append(f"📦 Copied {len(os.listdir(temp_process_dir))} crops for processing")
                 
-                # Apply corruption check first (if enabled)
+                # Apply corruption check first (if enabled) - no caption preservation for crops
                 if check_corruption:
                     processing_log.append("🔍 Checking for corrupted crops...")
-                    checked, corrupted, corruption_log = self.check_and_remove_corrupted_images(temp_process_dir)
+                    checked, corrupted, corruption_log = self.check_and_remove_corrupted_images(temp_process_dir, False)
                     processing_log.append(f"Corruption check: {checked} checked, {corrupted} corrupted")
                 
-                # Apply RGB conversion (if enabled)
+                # Apply RGB conversion (if enabled) - no caption preservation for crops
                 if convert_rgb:
                     processing_log.append("🎨 Converting crops to RGB...")
-                    converted, errors, conversion_log = self.convert_images_to_rgb(temp_process_dir)
+                    converted, errors, conversion_log = self.convert_images_to_rgb(temp_process_dir, False)
                     processing_log.append(f"RGB conversion: {converted} converted, {errors} errors")
                 
                 # Create ZIP from processed crops
@@ -753,7 +844,7 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
                 # Hero Section
                 gr.HTML("""
                 <div class="about-section">
-                    <h2>🎯 Welcome to PixelPruner v1.1</h2>
+                    <h2>🎯 Welcome to PixelPruner v1.2</h2>
                     <p style="font-size: 18px; margin-bottom: 0;">
                         Streamline your workflow and achieve perfect image crops every time with PixelPruner! 
                     </p>
@@ -1031,6 +1122,11 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
                             value=True,
                             info="Scan for and remove corrupted/truncated image files"
                         )
+                        preserve_captions_check = gr.Checkbox(
+                            label="📝 Preserve Caption Files", 
+                            value=True,
+                            info="Keep .txt caption files paired with images (for LoRA training)"
+                        )
                     
                     process_btn = gr.Button("🚀 Process Dataset", variant="primary", size="lg")
                     
@@ -1085,6 +1181,15 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
                     - Removes files that can't be properly loaded
                     - Quarantines problematic files separately
                     - Ensures dataset integrity
+                    """)
+                
+                with gr.Column():
+                    gr.Markdown("""
+                    **📝 Preserve Caption Files:**
+                    - Keeps .txt files paired with images
+                    - Essential for LoRA training datasets
+                    - Removes captions only when images are corrupted
+                    - Maintains proper image-caption relationships
                     """)
     
     # Event handlers
@@ -1241,7 +1346,7 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
     # Utilities tab functions
     process_btn.click(
         app.process_uploaded_dataset,
-        inputs=[dataset_zip, convert_rgb_check, corruption_check],
+        inputs=[dataset_zip, convert_rgb_check, corruption_check, preserve_captions_check],
         outputs=[utilities_download, utilities_status, utilities_gallery, processing_log]
     ).then(
         lambda x: gr.update(visible=True) if x else gr.update(visible=False),
