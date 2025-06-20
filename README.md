@@ -1,6 +1,8 @@
 # PixelPruner Gradio
 PixelPruner Gradio is a web-based image cropping application designed for AI dataset preparation and image processing workflows. Built with Gradio, it offers an intuitive browser interface for cropping, managing, and downloading processed images. Perfect for preparing training datasets, cropping AI-generated art, or any batch image processing task.
 
+#### Also available as a [HuggingFace Space](https://huggingface.co/spaces/TheAllyPrompts/PixelPruner)!
+
 This is the Gradio implementation of the Python app/windows desktop app [https://github.com/theallyprompts/PixelPruner](https://github.com/theallyprompts/PixelPruner)
 
 ![image](https://github.com/user-attachments/assets/dffadcba-d8b8-4a43-be3e-133dc478ff1e)
