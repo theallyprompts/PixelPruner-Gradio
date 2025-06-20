@@ -219,6 +219,10 @@ class ImagePrepApp:
             1.0  # Reset zoom slider
         )
     
+    def toggle_gallery_drawer(self, current_visibility):
+        """Toggle the visibility of the gallery drawer"""
+        return not current_visibility
+    
     def process_crop_click(self, image, crop_preset, custom_width, custom_height, zoom_value, display_size_name, evt: gr.SelectData):
         """Process crop when user clicks on image with zoom consideration"""
         if image is None or not self.images:
@@ -494,13 +498,39 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
         margin-bottom: 20px;
     }
     .step-card {
-    background: #7382bb;
-    border-left: 4px solid #007bff;
-    padding: 15px;
-    margin: 10px 0;
-    border-radius: 0 8px 8px 0;
-    color: #212529;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background: #7382bb;
+        border-left: 4px solid #007bff;
+        padding: 15px;
+        margin: 10px 0;
+        border-radius: 0 8px 8px 0;
+        color: #212529;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    /* Remove drawer styling - keep it simple */
+    .gallery-drawer {
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 20px;
+        background: #fafafa;
+        transition: all 0.3s ease;
+    }
+    /* Drawer toggle button styling */
+    .drawer-toggle {
+        background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%) !important;
+        color: white !important;
+        font-weight: bold !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 10px 15px !important;
+        margin-bottom: 10px !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+    }
+    .drawer-toggle:hover {
+        background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.3) !important;
     }
 """) as demo:
     gr.Markdown("# ✂️ PixelPruner")
@@ -601,49 +631,60 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
         
         # TAB 2: CROPPING
         with gr.Tab("✂️ Crop Images", id="crop_tab", visible=False) as crop_tab:
-            gr.Markdown("## Image Cropping Interface")
+            gr.Markdown("## Image Cropping")
             
             with gr.Row():
                 # Left column - Image selection and cropping
                 with gr.Column(scale=2):
-                    gr.Markdown("### 🖼️ Select Image to Crop")
-                    image_gallery = gr.Gallery(
-                        label="Click thumbnail to select image",
-                        show_label=True,
-                        columns=8,
-                        object_fit="cover",
-                        allow_preview=False,
-                        container=True,
-                        interactive=True
-                    )
+                    # Collapsible Gallery Section
+                    gallery_visible = gr.State(True)  # Track drawer visibility state
                     
                     with gr.Row():
-                        image_info = gr.Textbox(
-                            label="Current Image Info", 
-                            interactive=False,
-                            placeholder="Select an image from the gallery above",
-                            scale=2
-                        )
-                        
-                        display_size_dropdown = gr.Dropdown(
-                            choices=list(app.display_sizes.keys()),
-                            value="Medium (800x600)",
-                            label="Display Size",
+                        gr.Markdown("### 🖼️ Select Image to Crop")
+                        toggle_btn = gr.Button(
+                            "🔽 Hide Gallery", 
+                            variant="secondary",
+                            size="sm",
                             scale=1
                         )
                     
-                    gr.Markdown("### 🎯 Click on image to crop at that location")
-                    with gr.Row():
-                        current_image = gr.Image(
-                            label="Click to Crop", 
-                            type="pil",
-                            interactive=True,
-                            height=600,
-                            container=True,
+                    with gr.Column(visible=True) as gallery_section:
+                        image_gallery = gr.Gallery(
+                            label="Click thumbnail to select image",
                             show_label=True,
-                            elem_id="main_crop_image",
-                            sources=[]
+                            columns=8,
+                            object_fit="cover",
+                            allow_preview=False,
+                            container=True,
+                            interactive=True
                         )
+                        
+                        with gr.Row():
+                            image_info = gr.Textbox(
+                                label="Current Image Info", 
+                                interactive=False,
+                                placeholder="Select an image from the gallery above",
+                                scale=2
+                            )
+                            
+                            display_size_dropdown = gr.Dropdown(
+                                choices=list(app.display_sizes.keys()),
+                                value="Medium (800x600)",
+                                label="Display Size",
+                                scale=1
+                            )
+                    
+                    gr.Markdown("### 🎯 Click on image to crop at that location")
+                    current_image = gr.Image(
+                        label="Click to Crop", 
+                        type="pil",
+                        interactive=True,
+                        height=600,
+                        container=True,
+                        show_label=True,
+                        elem_id="main_crop_image",
+                        sources=[]
+                    )
                     
                     # Navigation buttons
                     with gr.Row():
@@ -652,55 +693,55 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
                 
                 # Right column - Crop settings and preview
                 with gr.Column(scale=1):
-                    gr.Markdown("### 🔲 Crop Settings")
-                    
-                    crop_preset = gr.Dropdown(
-                        choices=list(app.crop_presets.keys()),
-                        value="512x512",
-                        label="Crop Dimensions"
-                    )
-                    
-                    with gr.Group(visible=False) as custom_group:
-                        custom_width = gr.Number(label="Custom Width", value=512, minimum=1)
-                        custom_height = gr.Number(label="Custom Height", value=512, minimum=1)
-                    
-                    # Zoom slider
-                    gr.Markdown("### 🔍 Zoom Control")
-                    gr.Markdown("*Higher zoom = closer view (smaller crop area)*")
-                    zoom_slider = gr.Slider(
-                        minimum=0.1,
-                        maximum=3.0,
-                        step=0.1,
-                        value=1.0,
-                        label="Zoom Level",
-                        interactive=True
-                    )
-                    zoom_info = gr.Textbox(
-                        value="Zoom: 1.0x",
-                        label="Zoom Info",
-                        interactive=False
-                    )
-                    
-                    # Hidden fields to store current crop dimensions
-                    current_crop_width = gr.Number(value=512, visible=False)
-                    current_crop_height = gr.Number(value=512, visible=False)
-                    
-                    gr.Markdown("### 🖼️ Crop Preview")
-                    cropped_image = gr.Image(
-                        label="Cropped Result", 
-                        type="pil",
-                        height=300,
-                        sources=[]
-                    )
-                    
-                    crop_status = gr.Textbox(
-                        label="Crop Info", 
-                        interactive=False,
-                        placeholder="Click on image to create crop"
-                    )
-                    
-                    save_btn = gr.Button("💾 Save Crop", variant="primary", size="lg")
-                    save_status = gr.Textbox(label="Save Status", interactive=False)
+                        gr.Markdown("### 🔲 Crop Settings")
+                        
+                        crop_preset = gr.Dropdown(
+                            choices=list(app.crop_presets.keys()),
+                            value="512x512",
+                            label="Crop Dimensions"
+                        )
+                        
+                        with gr.Group(visible=False) as custom_group:
+                            custom_width = gr.Number(label="Custom Width", value=512, minimum=1)
+                            custom_height = gr.Number(label="Custom Height", value=512, minimum=1)
+                        
+                        # Zoom slider
+                        gr.Markdown("### 🔍 Zoom Control")
+                        gr.Markdown("*Higher zoom = closer view (smaller crop area)*")
+                        zoom_slider = gr.Slider(
+                            minimum=0.1,
+                            maximum=3.0,
+                            step=0.1,
+                            value=1.0,
+                            label="Zoom Level",
+                            interactive=True
+                        )
+                        zoom_info = gr.Textbox(
+                            value="Zoom: 1.0x",
+                            label="Zoom Info",
+                            interactive=False
+                        )
+                        
+                        # Hidden fields to store current crop dimensions
+                        current_crop_width = gr.Number(value=512, visible=False)
+                        current_crop_height = gr.Number(value=512, visible=False)
+                        
+                        gr.Markdown("### 🖼️ Crop Preview")
+                        cropped_image = gr.Image(
+                            label="Cropped Result", 
+                            type="pil",
+                            height=300,
+                            sources=[]
+                        )
+                        
+                        crop_status = gr.Textbox(
+                            label="Crop Info", 
+                            interactive=False,
+                            placeholder="Click on image to create crop"
+                        )
+                        
+                        save_btn = gr.Button("💾 Save Crop", variant="primary", size="lg")
+                        save_status = gr.Textbox(label="Save Status", interactive=False)
         
         # TAB 3: DOWNLOAD MANAGEMENT
         with gr.Tab("📦 Preview & Download Crops", id="download_tab", visible=False) as download_tab:
@@ -744,6 +785,21 @@ with gr.Blocks(title="Image Prep Tool", theme=gr.themes.Soft(), css="""
             delete_status = gr.Textbox(label="Delete Status", interactive=False)
     
     # Event handlers
+    
+    # Toggle gallery section visibility
+    def update_toggle_button_and_gallery(current_visibility):
+        new_visibility = not current_visibility
+        if new_visibility:
+            button_text = "🔽 Hide Gallery"
+        else:
+            button_text = "🔼 Show Gallery"
+        return new_visibility, gr.update(value=button_text), gr.update(visible=new_visibility)
+    
+    toggle_btn.click(
+        update_toggle_button_and_gallery,
+        inputs=[gallery_visible],
+        outputs=[gallery_visible, toggle_btn, gallery_section]
+    )
     
     # Load images
     files_input.upload(
